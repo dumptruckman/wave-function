@@ -16,14 +16,16 @@
 #define Broadcast(x) MPI_Bcast(x, 1, MPI_INT, MASTER, MPI_COMM_WORLD)
 #define ReduceSum(x, y) MPI_Reduce(x, y, 1, MPI_DOUBLE, MPI_SUM, MASTER, MPI_COMM_WORLD)
 #define ReduceMax(x, y) MPI_Reduce(x, y, 1, MPI_DOUBLE, MPI_MAX, MASTER, MPI_COMM_WORLD)
+#define SendRecv(send, dest, recv, source, tag) MPI_Sendrecv(send, 1, MPI_DOUBLE, dest, tag, recv, 1, MPI_DOUBLE, source, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE)
 #define Time() MPI_Wtime()
 
 // functions defined after main
 void printArray(double *array, int length);
 void printlnArray(double *array, int length);
 void copyArray(double *source, double *dest, int length);
-double * createRange(int n);
+double * createRange(int n, int commSize, int rank);
 double ** allocateResultSpace(int n);
+double fInit(double **result, int j, int i, int n);
 double f(double **result, int j, int i, int n);
 
 void main() {
@@ -34,27 +36,37 @@ void main() {
   Size(&commSize);
   Rank(&myRank);
 
-  int n = 6, end = 4;
+  if(commSize % 2 != 0){
+    Abort(1);
+  }
+
+  int n = 6, end = 4, length = n/commSize;
   double *range = createRange(n); // creates our starting range
-  double **result = allocateResultSpace(n); // allocates space for our results
+  double **result = allocateResultSpace(length); // allocates space for our results
   double *swap; // serves as a temporary pointer swap
 
   // fill the first 2 result rows with the initial values
   result[0] = range;
-  copyArray(range, result[1], n);
+  copyArray(range, result[1], length);
 
-  printf("Initial Values: ");
+  printf("Initial Values of Rank %d: ", rank);
   printlnArray(range, n);
 
   int i, j;
   // Generate results for the first 2 steps
   for (j = 0; j < 2; j++) {
-    for (i = 0; i < n; i++) {
-      result[j][i] = f(result, j, i, n);
+    for (i = 0; i < length; i++) {
+      result[j][i] = isArrayEnd(i, rank, commSize, length) == 1 ? 0 : fInit(result, j, i);
     }
     printlnArray(result[j], n);
   }
 
+  double leftNeighborValue
+  double rightNeighborValue;
+  int leftNeighborRank;
+  int rightNeighborRank;
+  leftNeighborRank = rank==0? MPI_PROC_NULL: rank-1;
+  rightNeighborRank = rank==commSize-1? MPI_PROC_NULL: rank+1;
   // Generate results from step 2 to step end.
   for (j = 2; j <= end; j++) {
     for (i = 0; i < n; i++) {
@@ -98,11 +110,12 @@ void copyArray(double *source, double *dest, int length) {
   }
 }
 
-double * createRange(int n) {
-  double *range = malloc(n * sizeof(double));
+double * createRange(int n, int commSize, int rank) {
+  int length = n/commSize;
+  double *range = malloc((n/commSize) * sizeof(double));
   int i;
-  for (i = 0; i < n; i++) {
-    range[i] = (double) i / (n - 1);
+  for (i = 0; i < length; i++) {
+    range[i] = (double) (i + rank*length) / (n - 1);
   }
   return range;
 }
@@ -116,12 +129,17 @@ double ** allocateResultSpace(int n) {
   return result;
 }
 
-double f(double **result, int j, int i, int n) {
-  if (i == 0 || i == n - 1) {
-    return 0;
+double isArrayEnd(int i, int rank, int commSize, int length) {
+  if ((i == 0 && rank == 0) || (rank == commSize - 1 && i == length - 1)) {
+    return 1;
   }
-  if (j == 0 || j == 1) {
-    return sin(M_PI * result[j][i]);
-  }
+  return 0;
+}
+
+double fInit(double **result, int j, int i) {
+  return sin(M_PI * result[j][i]);
+}
+
+double f(double **result, int j, int i) {
   return 0.01 * (result[j-1][i-1] - 2 * result[j-1][i] + result[j-1][i+1]) + 2 * result[j-1][i] - result[j-2][i];
 }
